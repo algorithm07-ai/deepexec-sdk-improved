@@ -3,19 +3,23 @@ import aiohttp
 import json
 import time
 import uuid
-from typing import Dict, Any, Optional, List, AsyncGenerator
+from typing import Dict, Any, Optional, AsyncGenerator, List
 
 from .exceptions import (
-    MCPError,
-    MCPConnectionError,
-    MCPProtocolError,
-    MCPTimeoutError,
-    MCPAuthError,
-    MCPExecutionError,
-    MCPConfigError
+    MCPError, MCPAuthError, MCPConnectionError, 
+    MCPTimeoutError, MCPProtocolError, MCPExecutionError
 )
-from .protocol import build_request_message, parse_response_message, validate_protocol_version
-from .models import ExecutionRequest, ExecutionResult, GenerationRequest, GenerationResult
+from .models import (
+    ExecutionRequest, ExecutionResult, 
+    GenerationRequest, GenerationResult, 
+    StreamGenerationChunk, TokenUsage
+)
+from .protocols.mcp import (
+    build_request_message, parse_response_message,
+    MCPRequestType, MCPResponseType,
+    CreateSessionInput, CodeExecutionInput, TextGenerationInput,
+    TextGenerationMetadata
+)
 
 
 class DeepExecAsyncClient:
@@ -99,9 +103,9 @@ class DeepExecAsyncClient:
             await self.__aenter__()
 
         request_data = build_request_message(
-            type="create_session",
+            type=MCPRequestType.CREATE_SESSION,
             session_id=None,  # No session ID yet
-            input={"user_id": user_id},
+            input=CreateSessionInput(user_id=user_id),
             metadata={}
         )
 
@@ -157,14 +161,14 @@ class DeepExecAsyncClient:
         )
 
         request_data = build_request_message(
-            type="code_execution",
+            type=MCPRequestType.CODE_EXECUTION,
             session_id=self.session_id,
-            input={
-                "code": request.code,
-                "language": request.language,
-                "environment": request.environment,
-                "working_directory": request.working_directory
-            },
+            input=CodeExecutionInput(
+                code=request.code,
+                language=request.language,
+                environment=request.environment,
+                working_directory=request.working_directory
+            ),
             metadata={}
         )
 
@@ -238,16 +242,14 @@ class DeepExecAsyncClient:
         )
 
         request_data = build_request_message(
-            type="text_generation",
+            type=MCPRequestType.TEXT_GENERATION,
             session_id=self.session_id,
-            input={
-                "prompt": request.prompt,
-                "max_tokens": request.max_tokens,
-                "temperature": request.temperature
-            },
-            metadata={
-                "model": request.model
-            }
+            input=TextGenerationInput(
+                prompt=request.prompt,
+                max_tokens=request.max_tokens,
+                temperature=request.temperature
+            ),
+            metadata=TextGenerationMetadata(model=request.model)
         )
 
         # Use the provided timeout if specified, otherwise use the client's default
@@ -309,16 +311,14 @@ class DeepExecAsyncClient:
         )
 
         request_data = build_request_message(
-            type="text_generation_stream",
+            type=MCPRequestType.TEXT_GENERATION_STREAM,
             session_id=self.session_id,
-            input={
-                "prompt": request.prompt,
-                "max_tokens": request.max_tokens,
-                "temperature": request.temperature
-            },
-            metadata={
-                "model": request.model
-            }
+            input=TextGenerationInput(
+                prompt=request.prompt,
+                max_tokens=request.max_tokens,
+                temperature=request.temperature
+            ),
+            metadata=TextGenerationMetadata(model=request.model)
         )
 
         if self.session is None:
@@ -463,7 +463,7 @@ class DeepExecAsyncClient:
             await self.__aenter__()
 
         request_data = build_request_message(
-            type="cancel_execution",
+            type=MCPRequestType.CANCEL_EXECUTION,
             session_id=session_id,
             input={},
             metadata={}
