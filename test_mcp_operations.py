@@ -500,3 +500,235 @@ class TestDeepExecAsyncClient:
         )
         client.get_job_status.assert_called()
         client.get_text_generation_result.assert_called_once_with(TEST_JOB_ID)
+
+    # 测试新添加的 MCP 高级方法
+    @pytest.mark.asyncio
+    async def test_submit_mcp_job(self, client):
+        # 模拟 _send_request 方法
+        client._send_request = MagicMock()
+        client._send_request.return_value = mock_submit_job_response()["output"]
+        
+        # 调用方法
+        response = await client.submit_mcp_job(
+            name="test_mcp_job",
+            job_type="code_execution",
+            data={"code": TEST_CODE, "language": TEST_LANGUAGE},
+            timeout=120,
+            priority=5,
+            tags=["test", "mcp"]
+        )
+        
+        # 验证结果
+        assert response.job_id == TEST_JOB_ID
+        assert response.status == "PENDING"
+        
+        # 验证请求
+        client._send_request.assert_called_once()
+        args, kwargs = client._send_request.call_args
+        assert args[0] == "jobs"
+        assert "name" in args[1]
+        assert args[1]["name"] == "test_mcp_job"
+        assert args[1]["type"] == "code_execution"
+        assert args[1]["timeout"] == 120
+        assert args[1]["priority"] == 5
+        assert "test" in args[1]["tags"]
+        assert "mcp" in args[1]["tags"]
+    
+    @pytest.mark.asyncio
+    async def test_get_mcp_job_status(self, client):
+        # 模拟 _send_request 方法
+        client._send_request = MagicMock()
+        client._send_request.return_value = mock_job_status_response()["output"]
+        
+        # 调用方法
+        response = await client.get_mcp_job_status(TEST_JOB_ID)
+        
+        # 验证结果
+        assert response.job_id == TEST_JOB_ID
+        assert response.status == "COMPLETED"
+        assert response.progress == 100
+        assert "message" in response.result
+        
+        # 验证请求
+        client._send_request.assert_called_once()
+        args, kwargs = client._send_request.call_args
+        assert args[0] == f"jobs/{TEST_JOB_ID}/status"
+        assert "job_id" in args[1]
+        assert args[1]["job_id"] == TEST_JOB_ID
+    
+    @pytest.mark.asyncio
+    async def test_cancel_mcp_job(self, client):
+        # 模拟 _send_request 方法
+        client._send_request = MagicMock()
+        client._send_request.return_value = mock_cancel_job_response()["output"]
+        
+        # 调用方法
+        response = await client.cancel_mcp_job(TEST_JOB_ID, reason="Testing MCP cancellation")
+        
+        # 验证结果
+        assert response.job_id == TEST_JOB_ID
+        assert response.status == "CANCELED"
+        assert response.canceled_at is not None
+        
+        # 验证请求
+        client._send_request.assert_called_once()
+        args, kwargs = client._send_request.call_args
+        assert args[0] == f"jobs/{TEST_JOB_ID}/cancel"
+        assert "job_id" in args[1]
+        assert args[1]["job_id"] == TEST_JOB_ID
+        assert args[1]["reason"] == "Testing MCP cancellation"
+    
+    @pytest.mark.asyncio
+    async def test_wait_for_mcp_job_completion(self, client):
+        # 模拟 get_mcp_job_status 方法
+        # 首先返回进行中的状态，然后返回已完成的状态
+        client.get_mcp_job_status = MagicMock()
+        in_progress_response = MCPJobStatusResponse(
+            job_id=TEST_JOB_ID,
+            status="IN_PROGRESS",
+            progress=50,
+            created_at=datetime.now().isoformat(),
+            updated_at=datetime.now().isoformat()
+        )
+        completed_response = MCPJobStatusResponse(
+            job_id=TEST_JOB_ID,
+            status="COMPLETED",
+            progress=100,
+            created_at=datetime.now().isoformat(),
+            updated_at=datetime.now().isoformat(),
+            result={"message": "Job completed successfully"}
+        )
+        client.get_mcp_job_status.side_effect = [in_progress_response, completed_response]
+        
+        # 调用方法
+        response = await client.wait_for_mcp_job_completion(TEST_JOB_ID, poll_interval=0.1)
+        
+        # 验证结果
+        assert response.job_id == TEST_JOB_ID
+        assert response.status == "COMPLETED"
+        assert response.progress == 100
+        assert "message" in response.result
+        
+        # 验证调用次数
+        assert client.get_mcp_job_status.call_count == 2
+        client.get_mcp_job_status.assert_called_with(TEST_JOB_ID)
+
+# 同步客户端的 MCP 高级方法测试
+class TestDeepExecClientMCPMethods:
+    @pytest.fixture
+    def client(self):
+        with DeepExecClient(endpoint="https://test-api.example.com") as client:
+            yield client
+    
+    @patch("deepexec_sdk.core.client.requests.Session.post")
+    def test_submit_mcp_job(self, mock_post, client):
+        # 设置模拟响应
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_submit_job_response()["output"]
+        mock_post.return_value = mock_response
+        
+        # 调用方法
+        response = client.submit_mcp_job(
+            name="test_mcp_job",
+            job_type="code_execution",
+            data={"code": TEST_CODE, "language": TEST_LANGUAGE},
+            timeout=120,
+            priority=5,
+            tags=["test", "mcp"]
+        )
+        
+        # 验证结果
+        assert response.job_id == TEST_JOB_ID
+        assert response.status == "PENDING"
+        
+        # 验证请求
+        mock_post.assert_called_once()
+        _, kwargs = mock_post.call_args
+        json_data = kwargs.get("json", {})
+        assert "name" in json_data
+        assert json_data["name"] == "test_mcp_job"
+        assert json_data["type"] == "code_execution"
+        assert json_data["timeout"] == 120
+        assert json_data["priority"] == 5
+        assert "test" in json_data["tags"]
+        assert "mcp" in json_data["tags"]
+    
+    @patch("deepexec_sdk.core.client.requests.Session.post")
+    def test_get_mcp_job_status(self, mock_post, client):
+        # 设置模拟响应
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_job_status_response()["output"]
+        mock_post.return_value = mock_response
+        
+        # 调用方法
+        response = client.get_mcp_job_status(TEST_JOB_ID)
+        
+        # 验证结果
+        assert response.job_id == TEST_JOB_ID
+        assert response.status == "COMPLETED"
+        assert response.progress == 100
+        assert "message" in response.result
+        
+        # 验证请求
+        mock_post.assert_called_once()
+        _, kwargs = mock_post.call_args
+        json_data = kwargs.get("json", {})
+        assert "job_id" in json_data
+        assert json_data["job_id"] == TEST_JOB_ID
+    
+    @patch("deepexec_sdk.core.client.requests.Session.post")
+    def test_cancel_mcp_job(self, mock_post, client):
+        # 设置模拟响应
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_cancel_job_response()["output"]
+        mock_post.return_value = mock_response
+        
+        # 调用方法
+        response = client.cancel_mcp_job(TEST_JOB_ID, reason="Testing MCP cancellation")
+        
+        # 验证结果
+        assert response.job_id == TEST_JOB_ID
+        assert response.status == "CANCELED"
+        assert response.canceled_at is not None
+        
+        # 验证请求
+        mock_post.assert_called_once()
+        _, kwargs = mock_post.call_args
+        json_data = kwargs.get("json", {})
+        assert "job_id" in json_data
+        assert json_data["job_id"] == TEST_JOB_ID
+        assert json_data["reason"] == "Testing MCP cancellation"
+    
+    @patch("deepexec_sdk.core.client.DeepExecClient.get_mcp_job_status")
+    def test_wait_for_mcp_job_completion(self, mock_get_status, client):
+        # 设置模拟响应
+        # 首先返回进行中的状态，然后返回已完成的状态
+        in_progress_response = MCPJobStatusResponse(
+            job_id=TEST_JOB_ID,
+            status="IN_PROGRESS",
+            progress=50,
+            created_at=datetime.now().isoformat(),
+            updated_at=datetime.now().isoformat()
+        )
+        completed_response = MCPJobStatusResponse(
+            job_id=TEST_JOB_ID,
+            status="COMPLETED",
+            progress=100,
+            created_at=datetime.now().isoformat(),
+            updated_at=datetime.now().isoformat(),
+            result={"message": "Job completed successfully"}
+        )
+        mock_get_status.side_effect = [in_progress_response, completed_response]
+        
+        # 调用方法
+        response = client.wait_for_mcp_job_completion(TEST_JOB_ID, poll_interval=0.1)
+        
+        # 验证结果
+        assert response.job_id == TEST_JOB_ID
+        assert response.status == "COMPLETED"
+        assert response.progress == 100
+        assert "message" in response.result
+        
+        # 验证调用次数
+        assert mock_get_status.call_count == 2
+        mock_get_status.assert_called_with(TEST_JOB_ID)

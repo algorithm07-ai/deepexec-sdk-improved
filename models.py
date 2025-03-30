@@ -21,7 +21,18 @@ class MCPJobStatus(str, Enum):
 
 # 具体 MCP 请求模型
 class MCPSubmitJobRequest(BaseModel):
-    """提交 MCP 作业请求模型"""
+    """提交 MCP 作业请求模型
+    
+    该模型用于向 MCP 服务提交新作业，支持代码执行和文本生成等多种作业类型。
+    
+    Attributes:
+        name: 作业名称，用于标识作业
+        type: 作业类型，如 "code_execution"、"text_generation" 等
+        data: 作业数据，根据作业类型不同而变化
+        timeout: 作业超时时间（秒）
+        priority: 作业优先级，数值越高优先级越高
+        tags: 作业标签，用于分类和筛选作业
+    """
     name: str
     type: str  # 作业类型: code_execution, text_generation 等
     data: Dict[str, Any]  # 作业数据，根据类型不同而变化
@@ -44,7 +55,16 @@ class MCPSubmitJobRequest(BaseModel):
 
 
 class MCPSubmitJobResponse(BaseModel):
-    """提交 MCP 作业响应模型"""
+    """提交 MCP 作业响应模型
+    
+    该模型表示作业提交后的响应信息。
+    
+    Attributes:
+        job_id: 作业唯一标识符
+        status: 作业初始状态
+        created_at: 作业创建时间（ISO 格式）
+        estimated_time: 预计完成时间（秒）
+    """
     job_id: str
     status: MCPJobStatus
     created_at: str  # ISO 格式时间戳
@@ -52,12 +72,31 @@ class MCPSubmitJobResponse(BaseModel):
 
 
 class MCPJobStatusRequest(BaseModel):
-    """查询 MCP 作业状态请求模型"""
+    """查询 MCP 作业状态请求模型
+    
+    该模型用于查询 MCP 作业的状态。
+    
+    Attributes:
+        job_id: 作业 ID
+    """
     job_id: str
 
 
 class MCPJobStatusResponse(BaseModel):
-    """查询 MCP 作业状态响应模型"""
+    """查询 MCP 作业状态响应模型
+    
+    该模型表示 MCP 作业状态查询的响应信息。
+    
+    Attributes:
+        job_id: 作业 ID
+        status: 作业状态
+        progress: 作业进度（0-100）
+        created_at: 作业创建时间（ISO 格式）
+        started_at: 作业开始时间（ISO 格式）
+        completed_at: 作业完成时间（ISO 格式）
+        result: 作业结果，仅当状态为 COMPLETED 时存在
+        error: 作业错误信息，仅当状态为 FAILED 时存在
+    """
     job_id: str
     status: MCPJobStatus
     progress: Optional[float] = None  # 进度百分比 (0-100)
@@ -69,20 +108,43 @@ class MCPJobStatusResponse(BaseModel):
 
 
 class MCPCancelJobRequest(BaseModel):
-    """取消 MCP 作业请求模型"""
+    """取消 MCP 作业请求模型
+    
+    该模型用于取消 MCP 作业。
+    
+    Attributes:
+        job_id: 作业 ID
+        reason: 取消原因
+    """
     job_id: str
     reason: Optional[str] = None
 
 
 class MCPCancelJobResponse(BaseModel):
-    """取消 MCP 作业响应模型"""
+    """取消 MCP 作业响应模型
+    
+    该模型表示 MCP 作业取消的响应信息。
+    
+    Attributes:
+        job_id: 作业 ID
+        status: 作业状态，应为 CANCELED
+        canceled_at: 作业取消时间（ISO 格式）
+    """
     job_id: str
     status: MCPJobStatus  # 应为 CANCELED
     canceled_at: str  # ISO 格式时间戳
 
 
 class MCPErrorDetail(BaseModel):
-    """MCP 错误详情模型"""
+    """MCP 错误详情模型
+    
+    该模型表示 MCP 错误的详细信息。
+    
+    Attributes:
+        code: 错误代码
+        message: 错误消息
+        details: 错误详细信息
+    """
     code: str
     message: str
     details: Optional[Dict[str, Any]] = None
@@ -90,7 +152,17 @@ class MCPErrorDetail(BaseModel):
 
 # 代码执行特定模型
 class MCPCodeExecutionRequest(BaseModel):
-    """代码执行请求模型"""
+    """代码执行请求模型
+    
+    该模型用于执行代码。
+    
+    Attributes:
+        code: 代码
+        language: 语言
+        environment: 环境变量
+        working_directory: 工作目录
+        timeout: 超时时间（秒）
+    """
     code: str
     language: str
     environment: Dict[str, str] = Field(default_factory=dict)
@@ -115,7 +187,17 @@ class MCPCodeExecutionRequest(BaseModel):
 
 
 class MCPCodeExecutionResult(BaseModel):
-    """代码执行结果模型"""
+    """代码执行结果模型
+    
+    该模型表示代码执行的结果。
+    
+    Attributes:
+        output: 输出
+        exit_code: 退出代码
+        execution_time: 执行时间（毫秒）
+        memory_usage: 内存使用量（MB）
+        metadata: 元数据
+    """
     output: str
     exit_code: int
     execution_time: int  # 毫秒
@@ -125,7 +207,16 @@ class MCPCodeExecutionResult(BaseModel):
 
 # 文本生成特定模型
 class MCPTextGenerationRequest(BaseModel):
-    """文本生成请求模型"""
+    """文本生成请求模型
+    
+    该模型用于生成文本。
+    
+    Attributes:
+        prompt: 提示
+        model: 模型
+        max_tokens: 最大令牌数
+        temperature: 温度
+    """
     prompt: str
     model: str = "deepseek-v3"
     max_tokens: int = 1000
@@ -151,14 +242,31 @@ class MCPTextGenerationRequest(BaseModel):
 
 
 class MCPTokenUsage(BaseModel):
-    """Token 使用统计模型"""
+    """Token 使用统计模型
+    
+    该模型表示 Token 的使用统计信息。
+    
+    Attributes:
+        prompt_tokens: 提示令牌数
+        completion_tokens: 完成令牌数
+        total_tokens: 总令牌数
+    """
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
 
 
 class MCPTextGenerationResult(BaseModel):
-    """文本生成结果模型"""
+    """文本生成结果模型
+    
+    该模型表示文本生成的结果。
+    
+    Attributes:
+        text: 生成的文本
+        model: 使用的模型
+        generation_time: 生成时间（毫秒）
+        usage: Token 使用统计信息
+    """
     text: str
     model: str
     generation_time: int = 0  # 毫秒
@@ -166,7 +274,14 @@ class MCPTextGenerationResult(BaseModel):
 
 
 class MCPStreamGenerationChunk(BaseModel):
-    """流式文本生成块模型"""
+    """流式文本生成块模型
+    
+    该模型表示流式文本生成的块。
+    
+    Attributes:
+        text: 生成的文本
+        done: 是否完成
+    """
     text: str
     done: bool = False
 

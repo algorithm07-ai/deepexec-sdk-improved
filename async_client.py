@@ -3,6 +3,7 @@ import aiohttp
 import json
 import time
 import uuid
+import logging
 from typing import Dict, Any, Optional, AsyncGenerator, List, Union
 
 from .exceptions import (
@@ -71,6 +72,15 @@ class DeepExecAsyncClient:
             self._headers["X-DeepSeek-Key"] = deepseek_key
         if e2b_key:
             self._headers["X-E2B-Key"] = e2b_key
+            
+        # 初始化日志记录器
+        self.logger = logging.getLogger("deepexec.async_client")
+        self.logger.setLevel(logging.DEBUG)
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -115,6 +125,8 @@ class DeepExecAsyncClient:
             metadata={}
         )
 
+        self.logger.debug("Creating new session with user ID %s", user_id)
+
         response = await self._send_request(
             "sessions",
             request_data
@@ -123,6 +135,8 @@ class DeepExecAsyncClient:
         self.session_id = response.get("session_id")
         if not self.session_id:
             raise MCPProtocolError("Failed to create session: No session ID returned")
+
+        self.logger.debug("Created new session with ID %s", self.session_id)
 
         return self.session_id
 
@@ -180,6 +194,8 @@ class DeepExecAsyncClient:
 
         # Use the provided timeout if specified, otherwise use the client's default
         current_timeout = timeout or self.timeout
+
+        self.logger.debug("Executing code with language %s and timeout %s", language, current_timeout)
 
         try:
             response = await self._send_request(
@@ -260,6 +276,8 @@ class DeepExecAsyncClient:
 
         # Use the provided timeout if specified, otherwise use the client's default
         current_timeout = timeout or self.timeout
+
+        self.logger.debug("Generating text with model %s and timeout %s", model, current_timeout)
 
         response = await self._send_request(
             "generate",
@@ -488,15 +506,158 @@ class DeepExecAsyncClient:
 
     async def close(self) -> None:
         """Close the client connection."""
-        await self.__aexit__(None, None, None)
+        if self.session:
+            await self.session.close()
+            self.session = None
+            self.session_id = None
 
-    async def submit_job(self, 
-                        name: str, 
-                        job_type: str, 
-                        data: Dict[str, Any], 
-                        timeout: Optional[int] = 60,
-                        priority: Optional[int] = 0,
-                        tags: Optional[List[str]] = None) -> MCPSubmitJobResponse:
+    # MCP 操作的高级方法
+    async def submit_mcp_job(
+        self, 
+        name: str, 
+        job_type: str, 
+        data: Dict[str, Any], 
+        timeout: Optional[int] = 60, 
+        priority: Optional[int] = 0,
+        tags: Optional[List[str]] = None
+    ) -> MCPSubmitJobResponse:
+        """Submit a job to the MCP.
+
+        Args:
+            name: The name of the job.
+            job_type: The type of the job.
+            data: The job data.
+            timeout: The job timeout in seconds.
+            priority: The job priority.
+            tags: Optional tags for the job.
+
+        Returns:
+            The job submission response.
+
+        Raises:
+            MCPProtocolError: If job submission fails.
+        """
+        if not self.session_id:
+            await self.create_session()
+
+        request = MCPSubmitJobRequest(
+            name=name,
+            type=job_type,
+            data=data,
+            timeout=timeout,
+            priority=priority,
+            tags=tags or []
+        )
+
+        self.logger.debug("Submitting MCP job: %s (type: %s)", name, job_type)
+
+        response = await self._send_request(
+            "jobs",
+            request
+        )
+
+        return MCPSubmitJobResponse(**response)
+
+    async def get_mcp_job_status(self, job_id: str) -> MCPJobStatusResponse:
+        """Get the status of an MCP job.
+
+        Args:
+            job_id: The ID of the job.
+
+        Returns:
+            The job status response.
+
+        Raises:
+            MCPProtocolError: If status retrieval fails.
+        """
+        if not self.session_id:
+            await self.create_session()
+
+        request = MCPJobStatusRequest(job_id=job_id)
+
+        self.logger.debug("Getting status for MCP job: %s", job_id)
+
+        response = await self._send_request(
+            f"jobs/{job_id}/status",
+            request
+        )
+
+        return MCPJobStatusResponse(**response)
+
+    async def cancel_mcp_job(self, job_id: str, reason: Optional[str] = None) -> MCPCancelJobResponse:
+        """Cancel an MCP job.
+
+        Args:
+            job_id: The ID of the job to cancel.
+            reason: Optional reason for cancellation.
+
+        Returns:
+            The job cancellation response.
+
+        Raises:
+            MCPProtocolError: If job cancellation fails.
+        """
+        if not self.session_id:
+            await self.create_session()
+
+        request = MCPCancelJobRequest(
+            job_id=job_id,
+            reason=reason
+        )
+
+        self.logger.debug("Cancelling MCP job: %s (reason: %s)", job_id, reason or "Not specified")
+
+        response = await self._send_request(
+            f"jobs/{job_id}/cancel",
+            request
+        )
+
+        return MCPCancelJobResponse(**response)
+
+    async def wait_for_mcp_job_completion(
+        self, 
+        job_id: str, 
+        poll_interval: float = 1.0, 
+        max_wait_time: Optional[float] = None
+    ) -> MCPJobStatusResponse:
+        """Wait for an MCP job to complete.
+
+        Args:
+            job_id: The ID of the job to wait for.
+            poll_interval: The interval between status checks in seconds.
+            max_wait_time: The maximum time to wait in seconds. If None, wait indefinitely.
+
+        Returns:
+            The final job status response.
+
+        Raises:
+            MCPTimeoutError: If the job does not complete within the specified time.
+            MCPProtocolError: If status retrieval fails.
+        """
+        start_time = time.time()
+        self.logger.debug("Waiting for MCP job completion: %s", job_id)
+
+        while True:
+            status_response = await self.get_mcp_job_status(job_id)
+            
+            if status_response.status in [MCPJobStatus.COMPLETED, MCPJobStatus.FAILED, MCPJobStatus.CANCELED]:
+                self.logger.debug("MCP job %s completed with status: %s", job_id, status_response.status)
+                return status_response
+            
+            if max_wait_time and (time.time() - start_time) > max_wait_time:
+                raise MCPTimeoutError(f"Job {job_id} did not complete within the specified time")
+            
+            await asyncio.sleep(poll_interval)
+
+    # 更新现有方法以使用新的 MCP 高级方法
+    async def submit_job(
+        self, 
+        name: str, 
+        job_type: str, 
+        data: Dict[str, Any], 
+        timeout: Optional[int] = 60,
+        priority: Optional[int] = 0,
+        tags: Optional[List[str]] = None) -> MCPSubmitJobResponse:
         """Submit a job to the MCP service.
         
         Args:
@@ -516,33 +677,15 @@ class DeepExecAsyncClient:
             MCPTimeoutError: If the request times out.
             MCPProtocolError: If there's an issue with the protocol.
         """
-        if self.session is None:
-            await self.__aenter__()
-            
-        # Create and validate the request using Pydantic model
-        request = MCPSubmitJobRequest(
+        return await self.submit_mcp_job(
             name=name,
-            type=job_type,
+            job_type=job_type,
             data=data,
             timeout=timeout,
             priority=priority,
-            tags=tags or []
+            tags=tags
         )
-        
-        # Send the request
-        response = await self._send_request(
-            "jobs",
-            request.dict()
-        )
-        
-        # Parse and return the response
-        return MCPSubmitJobResponse(
-            job_id=response.get("job_id"),
-            status=MCPJobStatus(response.get("status")),
-            created_at=response.get("created_at"),
-            estimated_time=response.get("estimated_time")
-        )
-    
+
     async def get_job_status(self, job_id: str) -> MCPJobStatusResponse:
         """Get the status of a job.
         
@@ -557,30 +700,8 @@ class DeepExecAsyncClient:
             MCPTimeoutError: If the request times out.
             MCPProtocolError: If there's an issue with the protocol.
         """
-        if self.session is None:
-            await self.__aenter__()
-            
-        # Create and validate the request using Pydantic model
-        request = MCPJobStatusRequest(job_id=job_id)
-        
-        # Send the request
-        response = await self._send_request(
-            f"jobs/{job_id}/status",
-            {}
-        )
-        
-        # Parse and return the response
-        return MCPJobStatusResponse(
-            job_id=response.get("job_id"),
-            status=MCPJobStatus(response.get("status")),
-            progress=response.get("progress"),
-            created_at=response.get("created_at"),
-            started_at=response.get("started_at"),
-            completed_at=response.get("completed_at"),
-            result=response.get("result"),
-            error=response.get("error")
-        )
-    
+        return await self.get_mcp_job_status(job_id)
+
     async def cancel_job(self, job_id: str, reason: Optional[str] = None) -> MCPCancelJobResponse:
         """Cancel a job.
         
@@ -596,25 +717,8 @@ class DeepExecAsyncClient:
             MCPTimeoutError: If the request times out.
             MCPProtocolError: If there's an issue with the protocol.
         """
-        if self.session is None:
-            await self.__aenter__()
-            
-        # Create and validate the request using Pydantic model
-        request = MCPCancelJobRequest(job_id=job_id, reason=reason)
-        
-        # Send the request
-        response = await self._send_request(
-            f"jobs/{job_id}/cancel",
-            request.dict()
-        )
-        
-        # Parse and return the response
-        return MCPCancelJobResponse(
-            job_id=response.get("job_id"),
-            status=MCPJobStatus(response.get("status")),
-            canceled_at=response.get("canceled_at")
-        )
-    
+        return await self.cancel_mcp_job(job_id, reason)
+
     async def execute_code_job(self, 
                              code: str, 
                              language: str,
@@ -649,7 +753,7 @@ class DeepExecAsyncClient:
         )
         
         # Submit the job
-        return await self.submit_job(
+        return await self.submit_mcp_job(
             name=f"code_execution_{language}_{int(time.time())}",
             job_type="code_execution",
             data=code_request.dict(),
@@ -672,7 +776,7 @@ class DeepExecAsyncClient:
             MCPExecutionError: If the execution failed or is not complete.
         """
         # Get job status
-        status_response = await self.get_job_status(job_id)
+        status_response = await self.get_mcp_job_status(job_id)
         
         # Check if job is completed
         if status_response.status != MCPJobStatus.COMPLETED:
@@ -794,7 +898,7 @@ class DeepExecAsyncClient:
         )
         
         # Submit the job
-        return await self.submit_job(
+        return await self.submit_mcp_job(
             name=f"text_generation_{model}_{int(time.time())}",
             job_type="text_generation",
             data=text_request.dict(),
@@ -817,7 +921,7 @@ class DeepExecAsyncClient:
             MCPExecutionError: If the generation failed or is not complete.
         """
         # Get job status
-        status_response = await self.get_job_status(job_id)
+        status_response = await self.get_mcp_job_status(job_id)
         
         # Check if job is completed
         if status_response.status != MCPJobStatus.COMPLETED:

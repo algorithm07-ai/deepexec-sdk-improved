@@ -151,6 +151,86 @@ async def test_job_management():
 asyncio.run(test_job_management())
 ```
 
+### 5. MCP High-Level Methods
+
+Test the new high-level MCP methods for more direct control over job management:
+
+```python
+# Synchronous client with high-level MCP methods
+with DeepExecClient() as client:
+    # Submit a job using the high-level method
+    job_response = client.submit_mcp_job(
+        name="high_level_test",
+        job_type="code_execution",
+        data={
+            "code": "print('Testing high-level MCP methods')",
+            "language": "python"
+        },
+        timeout=60,
+        priority=1,
+        tags=["test", "high-level"]
+    )
+    
+    job_id = job_response.job_id
+    print(f"Job submitted with ID: {job_id}")
+    
+    # Wait for job completion with custom polling
+    status_response = client.wait_for_mcp_job_completion(
+        job_id=job_id,
+        poll_interval=0.5,  # Check status every 0.5 seconds
+        max_wait_time=30.0  # Wait up to 30 seconds
+    )
+    
+    print(f"Final status: {status_response.status}")
+    print(f"Result: {status_response.result}")
+    
+    # Try to cancel a job (this one is already complete)
+    try:
+        cancel_response = client.cancel_mcp_job(
+            job_id=job_id,
+            reason="Testing cancellation API"
+        )
+        print(f"Job canceled at: {cancel_response.canceled_at}")
+    except Exception as e:
+        print(f"Cancellation failed (expected for completed jobs): {e}")
+
+# Asynchronous client with high-level MCP methods
+async def test_async_high_level_methods():
+    async with DeepExecAsyncClient() as client:
+        # Submit a long-running job
+        job_response = await client.submit_mcp_job(
+            name="async_high_level_test",
+            job_type="code_execution",
+            data={
+                "code": "import time\nfor i in range(5):\n    print(f'Step {i}')\n    time.sleep(1)\nprint('Done!')",
+                "language": "python"
+            },
+            timeout=60,
+            priority=1,
+            tags=["test", "async", "high-level"]
+        )
+        
+        job_id = job_response.job_id
+        print(f"Async job submitted with ID: {job_id}")
+        
+        # Check status immediately
+        status = await client.get_mcp_job_status(job_id)
+        print(f"Initial status: {status.status}, Progress: {status.progress}%")
+        
+        # Cancel the job before it completes
+        cancel_response = await client.cancel_mcp_job(
+            job_id=job_id,
+            reason="Testing async cancellation"
+        )
+        print(f"Job canceled at: {cancel_response.canceled_at}")
+        
+        # Verify cancellation
+        final_status = await client.get_mcp_job_status(job_id)
+        print(f"Final status: {final_status.status}")
+
+asyncio.run(test_async_high_level_methods())
+```
+
 ## Automated Testing
 
 The SDK includes automated tests for all MCP protocol operations. Run these tests to verify the implementation:
@@ -207,6 +287,13 @@ The following test cases should be verified:
    - Cancel running jobs
    - Verify status changes to CANCELED
    - Test canceling already completed jobs (should return appropriate error)
+
+4. **MCP High-Level Methods**
+   - Test submit_mcp_job with various job types and parameters
+   - Test get_mcp_job_status for different job states
+   - Test cancel_mcp_job for running and completed jobs
+   - Test wait_for_mcp_job_completion with different polling intervals and timeout settings
+   - Verify error handling and edge cases (e.g., canceling non-existent jobs)
 
 ### Code Execution
 
