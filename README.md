@@ -20,6 +20,8 @@ pip install deepexec-sdk
 
 ## Quick Start
 
+### Asynchronous Client
+
 ```python
 import asyncio
 from deepexec_sdk import DeepExecAsyncClient
@@ -30,30 +32,174 @@ async def main():
         deepseek_key="sk-...",  # Your DeepSeek API key
         e2b_key="e2b_..."      # Your E2B API key
     ) as client:
-        # Create a session
-        session_id = await client.create_session("user123")
-
         # Execute code
         try:
-            result = await client.execute_code(
+            result = await client.execute_code_and_wait(
                 "print('Hello, World!')", 
                 "python"
             )
-            print(result.output)
+            print(f"Output: {result.output}")
+            print(f"Exit code: {result.exit_code}")
+            print(f"Execution time: {result.execution_time} ms")
         except Exception as error:
             print(f"Execution failed: {error}")
 
         # Generate text
         try:
-            result = await client.generate_text(
-                "Explain quantum computing in simple terms"
+            result = await client.generate_text_and_wait(
+                "Explain quantum computing in simple terms",
+                model="deepseek-v3",
+                max_tokens=500
             )
-            print(result.text)
+            print(f"Generated text: {result.text}")
+            print(f"Model: {result.model}")
+            print(f"Generation time: {result.generation_time} ms")
         except Exception as error:
             print(f"Text generation failed: {error}")
 
 # Run the async function
 asyncio.run(main())
+```
+
+### Synchronous Client
+
+```python
+from deepexec_sdk import DeepExecClient
+
+# Create client instance
+with DeepExecClient(
+    deepseek_key="sk-...",  # Your DeepSeek API key
+    e2b_key="e2b_..."      # Your E2B API key
+) as client:
+    # Execute code
+    try:
+        result = client.execute_code_and_wait(
+            "print('Hello, World!')", 
+            "python"
+        )
+        print(f"Output: {result.output}")
+        print(f"Exit code: {result.exit_code}")
+        print(f"Execution time: {result.execution_time} ms")
+    except Exception as error:
+        print(f"Execution failed: {error}")
+
+    # Generate text
+    try:
+        result = client.generate_text_and_wait(
+            "Explain quantum computing in simple terms",
+            model="deepseek-v3",
+            max_tokens=500
+        )
+        print(f"Generated text: {result.text}")
+        print(f"Model: {result.model}")
+        print(f"Generation time: {result.generation_time} ms")
+    except Exception as error:
+        print(f"Text generation failed: {error}")
+```
+
+## MCP Protocol Operations
+
+The SDK provides specific methods for working with the MCP protocol:
+
+### Job Management
+
+```python
+# Asynchronous example
+async def job_management_example():
+    async with DeepExecAsyncClient() as client:
+        # Submit a job
+        job_response = await client.submit_job(
+            name="my_analysis_job",
+            job_type="code_execution",
+            data={
+                "code": "print('Analyzing data...')",
+                "language": "python"
+            }
+        )
+        
+        job_id = job_response.job_id
+        print(f"Job submitted with ID: {job_id}")
+        
+        # Check job status
+        status = await client.get_job_status(job_id)
+        print(f"Job status: {status.status}")
+        
+        # Wait for job completion
+        while status.status not in ["COMPLETED", "FAILED", "CANCELED"]:
+            await asyncio.sleep(1)
+            status = await client.get_job_status(job_id)
+            print(f"Job status: {status.status}, Progress: {status.progress}%")
+        
+        # Get results if job completed successfully
+        if status.status == "COMPLETED":
+            print(f"Job result: {status.result}")
+        else:
+            print(f"Job failed: {status.error}")
+            
+        # Cancel a job (if needed)
+        # cancel_response = await client.cancel_job(job_id, reason="No longer needed")
+        # print(f"Job canceled at: {cancel_response.canceled_at}")
+```
+
+### Code Execution
+
+```python
+# Synchronous example
+with DeepExecClient() as client:
+    # Submit a code execution job
+    job = client.execute_code_job(
+        code="import time\nfor i in range(5):\n    print(f'Step {i}')\n    time.sleep(1)",
+        language="python",
+        environment={"DEBUG": "true"},
+        timeout=30
+    )
+    
+    print(f"Code execution job submitted with ID: {job.job_id}")
+    
+    # Get the result when ready
+    result = client.get_code_execution_result(job.job_id)
+    
+    print(f"Output: {result.output}")
+    print(f"Exit code: {result.exit_code}")
+    print(f"Execution time: {result.execution_time} ms")
+    print(f"Memory usage: {result.memory_usage} bytes")
+    
+    # Or use the convenience method that handles polling
+    result = client.execute_code_and_wait(
+        code="print('Hello, World!')",
+        language="python"
+    )
+```
+
+### Text Generation
+
+```python
+# Asynchronous example
+async def text_generation_example():
+    async with DeepExecAsyncClient() as client:
+        # Submit a text generation job
+        job = await client.generate_text_job(
+            prompt="Write a short poem about artificial intelligence",
+            model="deepseek-v3",
+            max_tokens=200,
+            temperature=0.8
+        )
+        
+        print(f"Text generation job submitted with ID: {job.job_id}")
+        
+        # Get the result when ready
+        result = await client.get_text_generation_result(job.job_id)
+        
+        print(f"Generated text: {result.text}")
+        print(f"Model: {result.model}")
+        print(f"Generation time: {result.generation_time} ms")
+        print(f"Token usage: {result.usage}")
+        
+        # Or use the convenience method that handles polling
+        result = await client.generate_text_and_wait(
+            prompt="Explain how neural networks work",
+            model="deepseek-v3"
+        )
 ```
 
 ## Documentation
@@ -84,6 +230,7 @@ The SDK implements the Model Communication Protocol (MCP), a standardized protoc
 - **Code Execution**: Execute code in various programming languages
 - **Text Generation**: Generate text using AI models
 - **Streaming**: Stream text generation results for real-time applications
+- **Job Management**: Submit, monitor, and cancel jobs
 
 ### Protocol Structure
 
@@ -153,8 +300,13 @@ from deepexec_sdk.exceptions import (
 )
 
 try:
-    result = await client.execute_code(code, 'python')
-    print(result.output)
+    result = await client.execute_code_and_wait(
+        code="print('Hello, World!')", 
+        language="python"
+    )
+    print(f"Output: {result.output}")
+    print(f"Exit code: {result.exit_code}")
+    print(f"Execution time: {result.execution_time} ms")
 except MCPExecutionError as error:
     print(f"Execution failed with exit code {error.exit_code}")
     print(f"Output: {error.output}")
